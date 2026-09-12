@@ -17,21 +17,37 @@ def find_mpv() -> str | None:
         if exe:
             return exe
     extra: list[Path] = [
+        Path(r"C:\Program Files\MPV Player\mpv.exe"),
         Path(r"C:\Program Files\mpv\mpv.exe"),
+        Path(r"C:\Program Files (x86)\MPV Player\mpv.exe"),
         Path(r"C:\Program Files (x86)\mpv\mpv.exe"),
         Path(r"C:\mpv\mpv.exe"),
         Path.home() / "scoop" / "apps" / "mpv" / "current" / "mpv.exe",
         Path.home() / "scoop" / "shims" / "mpv.exe",
         Path.home() / "AppData" / "Local" / "Programs" / "mpv" / "mpv.exe",
+        Path.home() / "AppData" / "Local" / "Programs" / "MPV Player" / "mpv.exe",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links" / "mpv.exe",
     ]
+    for root in (
+        Path(r"C:\Program Files"),
+        Path(r"C:\Program Files (x86)"),
+        Path.home() / "AppData" / "Local" / "Programs",
+    ):
+        try:
+            extra.extend(root.glob("**/mpv.exe"))
+        except OSError:
+            pass
     winget = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
     if winget.is_dir():
         extra.extend(winget.glob("**/mpv.exe"))
+    seen: set[str] = set()
     for p in extra:
         try:
             if p.is_file():
-                return str(p)
+                key = str(p).lower()
+                if key not in seen:
+                    seen.add(key)
+                    return str(p)
         except OSError:
             continue
     return None
@@ -103,14 +119,13 @@ class PlayerWidget(QWidget):
         self._proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         wid = int(self._video.winId())
         args = [
+            "--no-config",
             "--force-window=no",
             f"--wid={wid}",
             "--keep-open=no",
             "--cache=yes",
-            "--demuxer-lavf-o=live_start_index=-1",
             "--demuxer-lavf-analyzeduration=2",
             "--hwdec=auto",
-            "--vd-lavc-o=flags=+low_delay",
             url,
         ]
         self._proc.start(self._mpv_path, args)
