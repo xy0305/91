@@ -230,6 +230,8 @@ class FLVToTS:
         self.header_done = False
         self.buf = b""
         self.nvideo = 0
+        self.seen_idr = False  # 只输出 IDR 后的数据(复刻 PXFLVInterceptor)
+        self.last_vps_pts = 0  # 每 2 秒强制插入 VPS/SPS/PPS
 
     def psi(self) -> bytes:
         return _ts_write(self.cc, PID_PAT, _pat()) + _ts_write(self.cc, PID_PMT, _pmt())
@@ -263,12 +265,35 @@ class FLVToTS:
                     data = payload[5:]
                     if codec == 12 and pkt == 0:
                         self.vps = hvcc_to_annexb(data)
-                    elif codec == 12 and pkt == 1:
-                        nal = length_to_annexb(data)
+                    elif pkt == 1 or codec == 13:
+                        # codec 12 pkt 1: length-prefixed NAL
+                        # codec 13: 4字节长度前缀 NAL (直播常用)
+                        if codec == 12:
+                            nal = length_to_annexb(data)
+                        else:
+                            nal = extract_nals(data)
                         if not nal:
                             continue
-                        if frame == 1 and self.vps:
+                        
+                        # 检测 IDR (NAL type 19/20/21)
+                        is_idr = False
+                        if nal.startswith(START):
+                            nuh = (nal[4] >> 1) & 0x3F if len(nal) > 4 else 0
+                            is_idr = nuh in (19, 20, 21)
+                        
+                        # 只输出 IDR 后的数据(复刻 PXFLVInterceptor)
+                        if is_idr:
+                            self.seen_idr = True
+                        if not self.seen_idr:
+                            continue
+                        
+                        # 每 2 秒或 IDR 时强制插入 VPS/SPS/PPS
+                        need_vps = (frame == 1 or is_idr or 
+                                   (pts - self.last_vps_pts) >= 180000)  # 2s = 180000 ticks
+                        if need_vps and self.vps:
                             nal = self.vps + nal
+                            self.last_vps_pts = pts
+                        
                         nal = AUD + nal
                         out += _ts_write(self.cc, PID_V, _pes(0xE0, pts, nal), True, pts)
                         self.nvideo += 1

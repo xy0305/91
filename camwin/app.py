@@ -219,12 +219,9 @@ class MainWindow(QMainWindow):
         if not room or not room.address:
             return
         self.info.setText(f"{room.title}\n{room.room_name or ''}\n{room.plat or ''}  🔥 {room.viewers}")
-        if self.player.has_mpv():
-            play = room.address
-            self.statusBar().showMessage(f"mpv 直连 {room.title}")
-        else:
-            play = PROXY.play_url(room.address)
-            self.statusBar().showMessage(f"系统播放器（易花屏，请装 mpv） {room.title}")
+        # 所有播放都走 TS 代理（修复 NAL + 强制 IDR）
+        play = PROXY.play_url(room.address)
+        self.statusBar().showMessage(f"播放 {room.title}")
         self.player.play(play)
 
     def _import(self):
