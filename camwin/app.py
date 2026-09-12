@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
 
         bar = QStatusBar()
         self.setStatusBar(bar)
-        bar.showMessage(f"播放后端: {self.player.backend_name()}  ·  TS 代理 :{PROXY.port}")
+        bar.showMessage(f"播放后端: {self.player.backend_name()}")
 
         self._fill_scripts()
         if self.script_list.count():
@@ -216,8 +216,12 @@ class MainWindow(QMainWindow):
         if not room or not room.address:
             return
         self.info.setText(f"{room.title}\n{room.room_name or ''}\n{room.plat or ''}  🔥 {room.viewers}")
-        play = PROXY.play_url(room.address)
-        self.statusBar().showMessage(f"打开 {room.title}")
+        if self.player.has_mpv():
+            play = room.address
+            self.statusBar().showMessage(f"mpv 直连 {room.title}")
+        else:
+            play = PROXY.play_url(room.address)
+            self.statusBar().showMessage(f"系统播放器（易花屏，请装 mpv） {room.title}")
         self.player.play(play)
 
     def _import(self):

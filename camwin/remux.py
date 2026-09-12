@@ -180,22 +180,22 @@ def length_to_annexb(data: bytes) -> bytes:
 
 
 def extract_nals(data: bytes) -> bytes:
-    prefixed = length_to_annexb(data)
-    if prefixed:
-        return prefixed
+    """Only accept a complete 4-byte length-prefixed NAL run. Never scan-guess."""
     out = b""
     i = 0
-    while i + 6 <= len(data):
+    while i + 4 <= len(data):
         n = struct.unpack(">I", data[i : i + 4])[0]
-        if 2 <= n <= len(data) - i - 4:
-            nal = data[i + 4 : i + 4 + n]
-            nuh = (nal[0] >> 1) & 0x3F
-            if nal[0] & 0x80 == 0 and nuh <= 40:
-                out += START + nal
-                i += 4 + n
-                continue
-        i += 1
-    return out
+        if n < 2 or i + 4 + n > len(data):
+            break
+        nal = data[i + 4 : i + 4 + n]
+        nuh = (nal[0] >> 1) & 0x3F
+        if nal[0] & 0x80 or nuh > 40:
+            break
+        out += START + nal
+        i += 4 + n
+    if i == len(data) and out:
+        return out
+    return b""
 
 
 def aac_adts(asc: bytes, frame: bytes) -> bytes:
@@ -263,8 +263,8 @@ class FLVToTS:
                     data = payload[5:]
                     if codec == 12 and pkt == 0:
                         self.vps = hvcc_to_annexb(data)
-                    elif pkt == 1 or codec == 13:
-                        nal = extract_nals(data)
+                    elif codec == 12 and pkt == 1:
+                        nal = length_to_annexb(data)
                         if not nal:
                             continue
                         if frame == 1 and self.vps:
