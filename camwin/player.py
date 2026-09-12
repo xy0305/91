@@ -139,6 +139,7 @@ class PlayerWidget(QWidget):
         
         wid = int(self._video.winId())
         args = [
+            "--no-config",
             "--force-window=yes",
             f"--wid={wid}",
             "--keep-open=no",
