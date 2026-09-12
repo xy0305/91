@@ -135,7 +135,10 @@ class MainWindow(QMainWindow):
 
         bar = QStatusBar()
         self.setStatusBar(bar)
-        bar.showMessage(f"播放后端: {self.player.backend_name()}")
+        bar.setSizeGripEnabled(False)
+        bar.showMessage(f"🎬 播放后端: {self.player.backend_name()}")
+        # 播放器状态变化时同步到状态栏
+        self.player.status_changed.connect(lambda m: bar.showMessage(m, 5000))
 
         self._fill_scripts()
         if self.script_list.count():

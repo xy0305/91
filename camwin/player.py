@@ -56,6 +56,7 @@ def find_mpv() -> str | None:
 class PlayerWidget(QWidget):
     started = Signal()
     failed = Signal(str)
+    status_changed = Signal(str)  # 新增:状态变化信号
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -63,6 +64,7 @@ class PlayerWidget(QWidget):
         self._proc: QProcess | None = None
         self._qt: QMediaPlayer | None = None
         self._audio: QAudioOutput | None = None
+        self._current_url = ""
 
         self._stack = QStackedWidget()
         self._placeholder = QLabel("选择房间开始播放")
@@ -73,23 +75,18 @@ class PlayerWidget(QWidget):
         self._stack.addWidget(self._placeholder)
         self._stack.addWidget(self._video)
 
-        self._warn = QLabel()
-        self._warn.setWordWrap(True)
-        self._warn.setStyleSheet(
-            "background:#5c3b00;color:#ffe9b0;padding:8px 10px;font-size:13px;"
+        # 状态栏:始终显示,不只是警告
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(
+            "background:#1a4d2e;color:#a8e6cf;padding:6px 10px;font-size:12px;"
         )
-        if self._mpv_path:
-            self._warn.hide()
-        else:
-            self._warn.setText(
-                "未检测到 mpv。当前用系统播放器，91zb 的 HEVC 直播会花屏或没声。\n"
-                "请安装：winget install mpv    然后重新打开 CamWin。"
-            )
+        self._update_status("就绪")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._warn)
+        lay.addWidget(self._status)
         lay.addWidget(self._stack, 1)
 
         if not self._mpv_path:
@@ -100,36 +97,71 @@ class PlayerWidget(QWidget):
             self._qt.errorOccurred.connect(self._on_qt_error)
             self._qt.playbackStateChanged.connect(self._on_qt_state)
 
+    def _update_status(self, msg: str, warn: bool = False) -> None:
+        """更新状态栏显示"""
+        self._status.setText(msg)
+        if warn:
+            self._status.setStyleSheet(
+                "background:#5c3b00;color:#ffe9b0;padding:6px 10px;font-size:12px;"
+            )
+        else:
+            self._status.setStyleSheet(
+                "background:#1a4d2e;color:#a8e6cf;padding:6px 10px;font-size:12px;"
+            )
+        self.status_changed.emit(msg)
+
     def has_mpv(self) -> bool:
         return bool(self._mpv_path)
 
     def play(self, url: str) -> None:
         self.stop()
+        self._current_url = url
         self._stack.setCurrentWidget(self._video)
+        
         if self._mpv_path:
+            short_url = url[:80] + "..." if len(url) > 80 else url
+            self._update_status(f"mpv 播放中: {short_url}")
             self._play_mpv(url)
         elif self._qt:
+            self._update_status(f"Qt 播放器(HEVC 会花屏): {url[:60]}...", warn=True)
             self._qt.setSource(QUrl(url))
             self._qt.play()
         else:
-            self.failed.emit("没有可用的播放器。请安装 mpv：winget install mpv")
+            msg = "❌ 没有可用播放器。请安装 mpv: winget install mpv"
+            self._update_status(msg, warn=True)
+            self.failed.emit(msg)
 
     def _play_mpv(self, url: str) -> None:
         self._proc = QProcess(self)
         self._proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self._proc.readyRead.connect(self._on_mpv_output)
+        self._proc.finished.connect(self._on_mpv_finished)
+        
         wid = int(self._video.winId())
         args = [
-            "--no-config",
-            "--force-window=no",
+            "--force-window=yes",
             f"--wid={wid}",
             "--keep-open=no",
             "--cache=yes",
             "--demuxer-lavf-analyzeduration=2",
             "--hwdec=auto",
+            "--msg-level=all=info",
             url,
         ]
         self._proc.start(self._mpv_path, args)
-        self.started.emit()
+
+    def _on_mpv_output(self) -> None:
+        """捕获 mpv 输出(调试用)"""
+        if self._proc:
+            out = bytes(self._proc.readAll()).decode("utf-8", errors="replace")
+            if "error" in out.lower() or "failed" in out.lower():
+                self._update_status(f"⚠️ mpv: {out[:100]}", warn=True)
+
+    def _on_mpv_finished(self, exit_code: int, exit_status) -> None:
+        """mpv 退出时更新状态"""
+        if exit_code != 0:
+            self._update_status(f"❌ mpv 退出(code {exit_code})", warn=True)
+            self.failed.emit(f"mpv 退出,代码 {exit_code}")
 
     def stop(self) -> None:
         if self._proc:
@@ -139,14 +171,20 @@ class PlayerWidget(QWidget):
         if self._qt:
             self._qt.stop()
         self._stack.setCurrentWidget(self._placeholder)
+        self._current_url = ""
+        self._update_status("已停止")
 
     def _on_qt_error(self, *_):
         if self._qt:
-            self.failed.emit(self._qt.errorString() or "播放失败")
+            err = self._qt.errorString() or "播放失败"
+            self._update_status(f"❌ Qt: {err}", warn=True)
+            self.failed.emit(err)
 
     def _on_qt_state(self, state):
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.started.emit()
 
     def backend_name(self) -> str:
-        return f"mpv ({self._mpv_path})" if self._mpv_path else "Qt Multimedia（画面会花，请装 mpv）"
+        if self._mpv_path:
+            return f"mpv ({self._mpv_path})"
+        return "⚠️ Qt Multimedia(HEVC 会花屏,请装 mpv)"
